@@ -4,6 +4,10 @@ from docx import Document
 import pandas as pd
 from sentence_transformers import SentenceTransformer, util
 
+# ✅ MUST be first Streamlit command
+st.set_page_config(page_title="Semantic Resume Screener", layout="wide")
+
+
 # Load model
 @st.cache_resource
 def load_model():
