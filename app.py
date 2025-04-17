@@ -1,14 +1,12 @@
-
 import streamlit as st
+# ✅ MUST be first Streamlit call
+st.set_page_config(page_title="Semantic Resume Screener", layout="wide")
+
 from docx import Document
 import pandas as pd
 from sentence_transformers import SentenceTransformer, util
 
-# ✅ MUST be first Streamlit command
-st.set_page_config(page_title="Semantic Resume Screener", layout="wide")
-
-
-# Load model
+# Load the BERT model
 @st.cache_resource
 def load_model():
     return SentenceTransformer('all-MiniLM-L6-v2')
@@ -20,7 +18,7 @@ def extract_text_from_docx(file):
     doc = Document(file)
     return "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
 
-# Parse JD into categories with weights
+# Parse JD with weight labels
 def parse_jd(text):
     lines = [l.strip() for l in text.split("\n") if l.strip()]
     jd_sections = []
@@ -33,7 +31,7 @@ def parse_jd(text):
             jd_sections.append(("Other", line.strip()))
     return jd_sections
 
-# Semantic scoring
+# Semantic scoring function
 def semantic_score(jd_sections, resume_text):
     resume_lines = [l for l in resume_text.split("\n") if len(l.strip()) > 5]
     resume_embeddings = model.encode(resume_lines, convert_to_tensor=True)
@@ -55,11 +53,10 @@ def semantic_score(jd_sections, resume_text):
     percentage = round((total_score / max_score) * 100, 2) if max_score else 0
     return scored_sections, percentage
 
-# Streamlit UI
-st.set_page_config(page_title="Semantic Resume Screener", layout="wide")
+# Streamlit Interface
 st.title("🧠 Threat Engineer Resume Screener – Semantic Enhanced")
 
-# JD Input
+# JD Section
 st.subheader("📌 Job Description Input")
 jd_file = st.file_uploader("Upload JD (DOCX)", type=["docx"], key="jd_file")
 jd_text = ""
@@ -67,24 +64,23 @@ jd_text = ""
 if jd_file:
     jd_text = extract_text_from_docx(jd_file)
 
-jd_text = st.text_area("Edit or Paste JD (Use 'Required:', 'Preferred:' prefixes)", jd_text, height=200)
+jd_text = st.text_area("Edit or Paste JD (use 'Required:', 'Preferred:' labels)", jd_text, height=200)
 jd_sections = parse_jd(jd_text)
 
-# Resume Upload
+# Resume Section
 st.subheader("📎 Upload Resume (DOCX)")
 resume_file = st.file_uploader("Upload Resume", type=["docx"], key="resume_file")
 if resume_file:
     resume_text = extract_text_from_docx(resume_file)
     st.text_area("Extracted Resume Text", resume_text, height=250)
 
-    # Score
+    # Scoring
     st.subheader("📊 Semantic Scoring Summary")
     results, score_percent = semantic_score(jd_sections, resume_text)
     df = pd.DataFrame(results, columns=["JD Level", "JD Requirement", "Best Match", "Weight", "Weighted Score"])
     st.dataframe(df)
 
     st.markdown(f"### ✅ Total Fit Score: **{score_percent}%**")
-
     if score_percent >= 80:
         st.success("✅ Strong Fit")
     elif score_percent >= 60:
@@ -92,10 +88,10 @@ if resume_file:
     else:
         st.error("❌ Low Fit")
 
+    # Feedback
     st.subheader("📝 Smart Feedback")
     gaps = [r[1] for r in results if r[2] < 0.5]
     strengths = [r[1] for r in results if r[2] >= 0.7]
-
     if strengths:
         st.markdown(f"**Strength Areas:** {', '.join(strengths)}")
     if gaps:
