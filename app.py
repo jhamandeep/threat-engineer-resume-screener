@@ -1,3 +1,4 @@
+
 import streamlit as st
 from docx import Document
 import pandas as pd
@@ -28,7 +29,11 @@ def extract_jd_criteria(text_block):
     jd_criteria = {}
     for line in lines:
         matches = [k for k, v in default_keywords.items() if any(kw.lower() in line.lower() for kw in v)]
-        jd_criteria[matches[0] if matches else line[:40]] = default_keywords.get(matches[0], line.split())
+        if matches:
+            jd_criteria[matches[0]] = default_keywords[matches[0]]
+        else:
+            # fallback to tokenizing line itself
+            jd_criteria[line[:40]] = [word.strip(",.():") for word in line.split() if len(word) > 3]
     return jd_criteria
 
 def evaluate_resume(text, criteria):
@@ -80,7 +85,6 @@ if jd_file:
     st.success("✅ JD file uploaded and parsed.")
 
 jd_text = st.text_area("📝 Edit JD or paste here:", value=jd_text or "\n".join(default_keywords.keys()), height=250)
-
 jd_criteria = extract_jd_criteria(jd_text)
 
 # 📄 Resume Upload
