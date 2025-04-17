@@ -1,8 +1,9 @@
 import streamlit as st
 from docx import Document
+import pandas as pd
 
-# --- Static base criteria (can be mapped from JD later) ---
-default_criteria = {
+# --- Base keyword mappings ---
+default_keywords = {
     "Threat Platforms (SkyHigh, Trellix, McAfee)": ["SkyHigh", "Trellix", "McAfee Web Gateway"],
     "Deployment & Infra Design": ["deployment", "implementation", "infrastructure", "refresh", "lifecycle"],
     "SIEM / Detection": ["SIEM", "Sentinel", "QRadar", "Splunk", "EDR"],
@@ -14,13 +15,21 @@ default_criteria = {
     "Soft Skills": ["documentation", "training", "communication", "stakeholder", "presentation", "leadership"]
 }
 
-# --- Functions ---
-def extract_text_from_docx(uploaded_file):
+# --- Helpers ---
+def extract_text_from_docx(file):
     try:
-        doc = Document(uploaded_file)
-        return "\n".join([para.text for para in doc.paragraphs])
+        doc = Document(file)
+        return "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
     except Exception as e:
         return f"[Error extracting text: {e}]"
+
+def extract_jd_criteria(text_block):
+    lines = [line.strip("•*-•:\n ") for line in text_block.split("\n") if len(line.strip()) > 4]
+    jd_criteria = {}
+    for line in lines:
+        matches = [k for k, v in default_keywords.items() if any(kw.lower() in line.lower() for kw in v)]
+        jd_criteria[matches[0] if matches else line[:40]] = default_keywords.get(matches[0], line.split())
+    return jd_criteria
 
 def evaluate_resume(text, criteria):
     scorecard = []
@@ -28,7 +37,6 @@ def evaluate_resume(text, criteria):
     max_score = len(criteria) * 5
     missing = []
     exceeding = []
-    
     for category, keywords in criteria.items():
         match_count = sum(1 for k in keywords if k.lower() in text.lower())
         if match_count >= len(keywords) * 0.8:
@@ -45,7 +53,6 @@ def evaluate_resume(text, criteria):
             rating = 1
             comment = "Missing from resume"
             missing.append((category, keywords))
-        
         total += rating
         scorecard.append((category, rating, comment))
     return scorecard, total, max_score, missing, exceeding
@@ -59,34 +66,38 @@ def generate_feedback(scorecard, missing, exceeding):
         feedback += f"**Missing key areas**: {', '.join([m[0] for m in missing])}.\n"
     return feedback
 
-# --- UI ---
+# --- Streamlit App ---
 st.set_page_config(page_title="Threat Engineer Screener", layout="wide")
 st.title("🛡️ Threat Engineer Resume Screener")
 
-# JD input section
-st.subheader("📌 Job Description Input")
-jd_input = st.text_area("Paste JD or customize below:", "\n".join(default_criteria.keys()), height=200)
+# 📎 JD Upload + Editor
+st.subheader("📌 Upload or Edit Job Description")
+jd_file = st.file_uploader("Upload JD (DOCX)", type=["docx"], key="jd_upload")
+jd_text = ""
 
-# Parse JD to criteria format
-jd_lines = [line.strip() for line in jd_input.strip().split("\n") if line.strip()]
-jd_criteria = {line: default_criteria.get(line, []) for line in jd_lines}
+if jd_file:
+    jd_text = extract_text_from_docx(jd_file)
+    st.success("✅ JD file uploaded and parsed.")
 
-# Resume upload
+jd_text = st.text_area("📝 Edit JD or paste here:", value=jd_text or "\n".join(default_keywords.keys()), height=250)
+
+jd_criteria = extract_jd_criteria(jd_text)
+
+# 📄 Resume Upload
 st.subheader("📎 Upload Resume (DOCX only)")
-uploaded_file = st.file_uploader("Upload candidate resume", type=["docx"])
+resume_file = st.file_uploader("Upload candidate resume", type=["docx"], key="resume_upload")
 
-if uploaded_file:
-    resume_text = extract_text_from_docx(uploaded_file)
-
+if resume_file:
+    resume_text = extract_text_from_docx(resume_file)
     st.subheader("📄 Resume Text Preview")
-    st.text_area("Extracted Resume Text", resume_text, height=300)
+    st.text_area("Resume Content", resume_text, height=300)
 
-    # Evaluate
+    # 🧠 Evaluate
     st.subheader("📊 Evaluation Summary")
     scorecard, total, max_score, missing, exceeding = evaluate_resume(resume_text, jd_criteria)
     percent = round((total / max_score) * 100, 2)
 
-    st.markdown(f"**Total Score:** {total} / {max_score} → **{percent}%**")
+    st.markdown(f"**Total Score:** `{total}` / `{max_score}` → **{percent}%**")
 
     if percent >= 75:
         st.success("✅ Strong Fit")
@@ -95,22 +106,19 @@ if uploaded_file:
     else:
         st.error("❌ Low Fit")
 
-    # Show table
     st.subheader("📋 Detailed Scorecard")
     st.table(pd.DataFrame(scorecard, columns=["Category", "Rating (1–5)", "Comments"]))
 
-    # Gap analysis
     st.subheader("🧭 Gap & Excellence Analysis")
     if missing:
-        st.markdown("**🔻 Missing or Weak Areas:**")
+        st.markdown("**🔻 Missing Areas:**")
         for cat, keywords in missing:
-            st.markdown(f"- ❌ {cat} (Expected keywords: *{', '.join(keywords)}*)")
+            st.markdown(f"- ❌ {cat} — *Expected:* `{', '.join(keywords)}`")
     if exceeding:
-        st.markdown("**🌟 Exceeded in:**")
+        st.markdown("**🌟 Exceeds Expectations In:**")
         for cat in exceeding:
             st.markdown(f"- ⭐ {cat}")
 
-    # Feedback block
     st.subheader("📝 Feedback Summary")
     feedback = generate_feedback(scorecard, missing, exceeding)
     st.markdown(feedback)
