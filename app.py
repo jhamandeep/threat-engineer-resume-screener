@@ -1,109 +1,87 @@
 
 import streamlit as st
-st.set_page_config(page_title="Hybrid Resume Screener", layout="wide")
+st.set_page_config(page_title="Structured Resume Screener", layout="wide")
 
 from docx import Document
 import pandas as pd
-from sentence_transformers import SentenceTransformer, util
 
-@st.cache_resource
-def load_model():
-    return SentenceTransformer('all-MiniLM-L6-v2')
-
-model = load_model()
-
-# --- Helper to extract text from docx ---
+# --- Helper: Extract text from DOCX ---
 def extract_text_from_docx(file):
     doc = Document(file)
-    return "\n".join([p.text.strip() for p in doc.paragraphs if p.text.strip()])
+    return "\n".join([para.text.strip() for para in doc.paragraphs if para.text.strip()])
 
-# --- Parse JD lines and assign weights ---
-def parse_jd_blocks(text):
-    lines = [l.strip() for l in text.split("\n") if l.strip()]
-    blocks = []
-    for line in lines:
-        if line.lower().startswith("required:"):
-            blocks.append(("Required", line[9:].strip(), 2.0))
-        elif line.lower().startswith("preferred:"):
-            blocks.append(("Preferred", line[10:].strip(), 1.5))
-        elif line.lower().startswith("soft skills:"):
-            blocks.append(("Soft Skills", line[12:].strip(), 1.0))
-        else:
-            blocks.append(("Other", line, 1.0))
-    return blocks
+# --- Predefined keyword buckets (can be expanded or externalized) ---
+keyword_model = {
+    "Required": ["SkyHigh", "Trellix", "DMZ", "SIEM", "CCNA", "Threat Engineer", "deployment", "implementation"],
+    "Preferred": ["ISO 27001", "SOC2", "PowerShell", "KQL", "TLS", "Splunk", "VPN", "Zero Trust"],
+    "Soft Skills": ["communication", "presentation", "stakeholder", "collaboration", "training", "documentation"]
+}
 
-# --- Hybrid semantic + keyword scorer ---
-def hybrid_score(jd_blocks, resume_text):
-    resume_lines = [l for l in resume_text.split("\n") if len(l.strip()) > 4]
-    resume_embeddings = model.encode(resume_lines, convert_to_tensor=True)
+weights = {
+    "Required": 2.0,
+    "Preferred": 1.5,
+    "Soft Skills": 1.0
+}
+
+# --- Rule-based scorer ---
+def structured_score(resume_text, jd_keywords):
     scored = []
     total = 0
     max_score = 0
 
-    for label, jd_line, weight in jd_blocks:
-        jd_embedding = model.encode(jd_line, convert_to_tensor=True)
-        cosine_scores = util.cos_sim(jd_embedding, resume_embeddings)[0]
-        max_cosine = float(cosine_scores.max())
+    for category, keywords in jd_keywords.items():
+        matches = []
+        for kw in keywords:
+            if kw.lower() in resume_text.lower():
+                matches.append(kw)
+        score = len(matches) * weights[category]
+        possible = len(keywords) * weights[category]
+        total += score
+        max_score += possible
+        scored.append((category, len(matches), len(keywords), matches, score, possible))
 
-        # Keyword fallback match
-        fallback_hit = any(word.lower() in line.lower() for line in resume_lines for word in jd_line.split() if len(word) > 3)
+    final_percent = round((total / max_score) * 100, 2) if max_score else 0
+    return scored, final_percent
 
-        # Final score boost if keyword matched
-        bonus = 0.1 if fallback_hit else 0
-        match_score = max_cosine + bonus
-        final_weighted = match_score * weight
+# --- UI ---
+st.title("✅ Structured Resume Screener (Keyword-Based, Transparent)")
 
-        total += final_weighted
-        max_score += weight
+# JD Block Editor
+st.subheader("📌 JD Keyword Buckets (Editable)")
+required_input = st.text_area("Required Keywords", ", ".join(keyword_model["Required"]))
+preferred_input = st.text_area("Preferred Keywords", ", ".join(keyword_model["Preferred"]))
+soft_input = st.text_area("Soft Skills Keywords", ", ".join(keyword_model["Soft Skills"]))
 
-        scored.append((label, jd_line, round(max_cosine, 2), fallback_hit, weight, round(final_weighted, 2)))
-
-    percent = round((total / max_score) * 100, 2) if max_score else 0
-    return scored, percent
-
-# --- UI layout ---
-st.title("🔍 Hybrid Resume Screener (BERT + Keyword Enhanced)")
-
-# JD Section
-st.subheader("📌 Job Description (use Required:, Preferred:, Soft Skills:)")
-jd_file = st.file_uploader("Upload JD (DOCX)", type=["docx"], key="jd_file")
-jd_text = ""
-
-if jd_file:
-    jd_text = extract_text_from_docx(jd_file)
-
-jd_text = st.text_area("✏️ Edit/Paste JD:", value=jd_text, height=200)
-jd_blocks = parse_jd_blocks(jd_text)
+# Update keyword model
+keyword_model["Required"] = [kw.strip() for kw in required_input.split(",") if kw.strip()]
+keyword_model["Preferred"] = [kw.strip() for kw in preferred_input.split(",") if kw.strip()]
+keyword_model["Soft Skills"] = [kw.strip() for kw in soft_input.split(",") if kw.strip()]
 
 # Resume Upload
-st.subheader("📎 Resume Upload")
-res_file = st.file_uploader("Upload Resume (DOCX)", type=["docx"], key="res_file")
-if res_file:
-    res_text = extract_text_from_docx(res_file)
-    st.text_area("📄 Resume Content", res_text, height=250)
+st.subheader("📎 Upload Resume (DOCX)")
+resume_file = st.file_uploader("Upload Resume File", type=["docx"])
+if resume_file:
+    resume_text = extract_text_from_docx(resume_file)
+    st.text_area("Extracted Resume", resume_text, height=250)
 
-    # Score
-    st.subheader("📊 Evaluation Results")
-    results, final_percent = hybrid_score(jd_blocks, res_text)
-    df = pd.DataFrame(results, columns=["Type", "JD Line", "BERT Match", "Keyword Hit", "Weight", "Score"])
+    # Scoring
+    st.subheader("📊 Scoring Results")
+    results, fit_score = structured_score(resume_text, keyword_model)
+    df = pd.DataFrame(results, columns=["Category", "Matched", "Total", "Matches", "Score", "Max Score"])
     st.dataframe(df)
 
-    st.markdown(f"### ✅ Total Fit Score: **{final_percent}%**")
-    if final_percent >= 80:
+    st.markdown(f"### ✅ Total Fit Score: **{fit_score}%**")
+    if fit_score >= 80:
         st.success("✅ Strong Fit")
-    elif final_percent >= 60:
+    elif fit_score >= 60:
         st.warning("⚠️ Partial Fit")
     else:
         st.error("❌ Low Fit")
 
-    st.subheader("🧠 Summary Insight")
-    gaps = [r[1] for r in results if r[2] < 0.5 and not r[3]]
-    hits = [r[1] for r in results if r[2] >= 0.65 or r[3]]
-    if hits:
-        st.markdown("**Matched Areas:**")
-        for h in hits:
-            st.markdown(f"- ✅ {h}")
-    if gaps:
-        st.markdown("**Gaps Found:**")
-        for g in gaps:
-            st.markdown(f"- ❌ {g}")
+    # Summary
+    st.subheader("📝 Summary")
+    for cat, matched, total, matches, _, _ in results:
+        if matched > 0:
+            st.markdown(f"- ✅ {cat}: {matched} / {total} → {', '.join(matches)}")
+        else:
+            st.markdown(f"- ❌ {cat}: No match")
