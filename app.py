@@ -1,9 +1,8 @@
-# Threat Engineer Resume Screening App
+# Threat Engineer Resume Screening App (v2 - Fixed)
 import streamlit as st
-import re
-import docx2txt
+from docx import Document
 
-# Define screening criteria and keyword-based scoring
+# --- Screening Criteria and Weights ---
 criteria = {
     "Years of Security Experience": (10, ["5+", "6+", "7+", "8+", "more than 5", "over 5"]),
     "SkyHigh / Trellix / McAfee": (15, ["SkyHigh", "Trellix", "McAfee Web Gateway"]),
@@ -18,26 +17,37 @@ criteria = {
     "Architecture / Design Thinking": (6, ["architecture", "design", "SME", "strategy", "planning"])
 }
 
+# --- Extract text from DOCX ---
+def extract_text_from_docx(file):
+    try:
+        doc = Document(file)
+        return "\n".join([para.text for para in doc.paragraphs])
+    except Exception as e:
+        return "Error extracting text: " + str(e)
+
+# --- Scoring Function ---
 def score_resume(text):
     total_score = 0
     max_score = sum(weight for weight, _ in criteria.values())
     detailed_scores = {}
 
     for category, (weight, keywords) in criteria.items():
-        found = any(re.search(rf"\\b{re.escape(keyword)}\\b", text, re.IGNORECASE) for keyword in keywords)
+        found = any(keyword.lower() in text.lower() for keyword in keywords)
         score = weight if found else 0
         detailed_scores[category] = (score, weight, "✔️" if found else "❌")
         total_score += score
 
     return total_score, max_score, detailed_scores
 
+# --- Streamlit App UI ---
 def main():
     st.set_page_config(page_title="Threat Engineer Resume Screener", layout="centered")
     st.title("🛡️ Threat Engineer Resume Screener")
 
     uploaded_file = st.file_uploader("Upload Resume (DOCX only)", type=["docx"])
     if uploaded_file:
-        resume_text = docx2txt.process(uploaded_file)
+        resume_text = extract_text_from_docx(uploaded_file)
+
         st.subheader("📄 Extracted Resume Text")
         st.text_area("Resume Content", resume_text, height=250)
 
@@ -60,3 +70,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
