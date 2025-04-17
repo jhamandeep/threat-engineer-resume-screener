@@ -1,113 +1,124 @@
 import streamlit as st
 from docx import Document
+import pandas as pd
 
-# --- Screening Criteria ---
-criteria = {
-    "Years of Security Experience": (10, ["5+", "6+", "7+", "8+", "more than 5", "over 5"]),
-    "SkyHigh / Trellix / McAfee": (15, ["SkyHigh", "Trellix", "McAfee Web Gateway"]),
-    "Threat Engineering Deployment (Infra + Lifecycle)": (15, ["deployment", "implementation", "lifecycle", "refresh", "infrastructure"]),
-    "SIEM / Threat Detection Tools": (10, ["SIEM", "QRadar", "Sentinel", "Splunk", "EDR"]),
-    "DMZ / Proxy / Routing Knowledge": (10, ["DMZ", "proxy", "routing", "SSL/TLS", "Cisco"]),
-    "Programming / Scripting": (8, ["Python", "PowerShell", "KQL", "Bash", "Shell"]),
-    "Certifications": (7, ["CISSP", "CCNA", "CEH", "NSE", "Microsoft Certified"]),
-    "Audit / Compliance Experience": (8, ["ISO", "SOC2", "audit", "compliance", "NIST"]),
-    "Sector Experience (Banking, Govt, Telecom)": (5, ["bank", "financial", "government", "telecom", "energy"]),
-    "Communication & Documentation": (6, ["documentation", "reports", "training", "stakeholder", "collaboration"]),
-    "Architecture / Design Thinking": (6, ["architecture", "design", "SME", "strategy", "planning"])
+# --- Base keyword mappings ---
+default_keywords = {
+    "Threat Platforms (SkyHigh, Trellix, McAfee)": ["SkyHigh", "Trellix", "McAfee Web Gateway"],
+    "Deployment & Infra Design": ["deployment", "implementation", "infrastructure", "refresh", "lifecycle"],
+    "SIEM / Detection": ["SIEM", "Sentinel", "QRadar", "Splunk", "EDR"],
+    "Network / Proxy / DMZ": ["DMZ", "proxy", "routing", "Cisco", "TLS", "SSL"],
+    "Scripting / Programming": ["Python", "PowerShell", "Bash", "Shell", "KQL"],
+    "Certifications": ["CISSP", "CCNA", "NSE", "Microsoft Certified", "CEH"],
+    "Audit & Compliance": ["ISO", "SOC2", "compliance", "NIST", "audit"],
+    "Sector Fit": ["bank", "financial", "government", "telecom", "energy"],
+    "Soft Skills": ["documentation", "training", "communication", "stakeholder", "presentation", "leadership"]
 }
 
-soft_skills_keywords = [
-    "communication", "collaboration", "team", "leadership", "mentoring", "problem-solving",
-    "stakeholder", "presentation", "documentation", "training", "knowledge transfer"
-]
-
-# --- Text Extraction ---
+# --- Helpers ---
 def extract_text_from_docx(file):
     try:
         doc = Document(file)
-        return "\n".join([para.text for para in doc.paragraphs])
+        return "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
     except Exception as e:
-        return "Error extracting text: " + str(e)
+        return f"[Error extracting text: {e}]"
 
-# --- Scoring Function ---
-def score_resume(text):
-    total_score = 0
-    max_score = sum(weight for weight, _ in criteria.values())
-    detailed_scores = {}
-    missing_items = []
+def extract_jd_criteria(text_block):
+    lines = [line.strip("•*-•:\n ") for line in text_block.split("\n") if len(line.strip()) > 4]
+    jd_criteria = {}
+    for line in lines:
+        matches = [k for k, v in default_keywords.items() if any(kw.lower() in line.lower() for kw in v)]
+        jd_criteria[matches[0] if matches else line[:40]] = default_keywords.get(matches[0], line.split())
+    return jd_criteria
 
-    for category, (weight, keywords) in criteria.items():
-        found = any(keyword.lower() in text.lower() for keyword in keywords)
-        score = weight if found else 0
-        detailed_scores[category] = (score, weight, "✔️" if found else "❌")
-        total_score += score
-        if not found:
-            missing_items.append((category, keywords))
+def evaluate_resume(text, criteria):
+    scorecard = []
+    total = 0
+    max_score = len(criteria) * 5
+    missing = []
+    exceeding = []
+    for category, keywords in criteria.items():
+        match_count = sum(1 for k in keywords if k.lower() in text.lower())
+        if match_count >= len(keywords) * 0.8:
+            rating = 5
+            comment = "Significantly exceeds expectations"
+            exceeding.append(category)
+        elif match_count >= len(keywords) * 0.5:
+            rating = 4
+            comment = "Exceeds expectations"
+        elif match_count >= 1:
+            rating = 3
+            comment = "Meets expectations"
+        else:
+            rating = 1
+            comment = "Missing from resume"
+            missing.append((category, keywords))
+        total += rating
+        scorecard.append((category, rating, comment))
+    return scorecard, total, max_score, missing, exceeding
 
-    return total_score, max_score, detailed_scores, missing_items
-
-# --- Soft Skills Detection ---
-def detect_soft_skills(text):
-    found = [word for word in soft_skills_keywords if word.lower() in text.lower()]
-    return found
-
-# --- High-Level Summary Generator ---
-def generate_review(percentage, soft_skills, missing_items):
-    level = "strong" if percentage >= 75 else "decent" if percentage >= 50 else "limited"
-    msg = f"The candidate demonstrates a **{level} technical alignment** with the Threat Engineer JD. "
-    if soft_skills:
-        msg += f"Soft skills like **{', '.join(set(soft_skills))}** were detected, indicating good team and communication potential. "
-    else:
-        msg += "However, no strong indication of soft skills or communication abilities were found. "
-
-    if missing_items:
-        msg += f"The resume is missing key focus areas such as: **{', '.join([cat for cat, _ in missing_items])}**. "
-        msg += "These should be addressed to improve fit for technical Threat Engineering roles."
-    else:
-        msg += "All critical dimensions from the JD were covered."
-
-    return msg
+def generate_feedback(scorecard, missing, exceeding):
+    level = "Strong" if len(exceeding) >= 4 else "Partial" if len(exceeding) >= 2 else "Limited"
+    feedback = f"Candidate shows **{level} alignment** to the JD.\n\n"
+    if exceeding:
+        feedback += f"**Exceeds expectations** in: {', '.join(exceeding)}.\n"
+    if missing:
+        feedback += f"**Missing key areas**: {', '.join([m[0] for m in missing])}.\n"
+    return feedback
 
 # --- Streamlit App ---
-def main():
-    st.set_page_config(page_title="Threat Engineer Resume Screener", layout="centered")
-    st.title("🛡️ Threat Engineer Resume Screener")
+st.set_page_config(page_title="Threat Engineer Screener", layout="wide")
+st.title("🛡️ Threat Engineer Resume Screener")
 
-    uploaded_file = st.file_uploader("Upload Resume (DOCX only)", type=["docx"])
-    if uploaded_file:
-        resume_text = extract_text_from_docx(uploaded_file)
+# 📎 JD Upload + Editor
+st.subheader("📌 Upload or Edit Job Description")
+jd_file = st.file_uploader("Upload JD (DOCX)", type=["docx"], key="jd_upload")
+jd_text = ""
 
-        st.subheader("📄 Extracted Resume Text")
-        st.text_area("Resume Content", resume_text, height=250)
+if jd_file:
+    jd_text = extract_text_from_docx(jd_file)
+    st.success("✅ JD file uploaded and parsed.")
 
-        st.subheader("📊 Scoring Results")
-        total, max_score, results, missing_items = score_resume(resume_text)
-        percent = round((total / max_score) * 100, 2)
+jd_text = st.text_area("📝 Edit JD or paste here:", value=jd_text or "\n".join(default_keywords.keys()), height=250)
 
-        st.write(f"**Total Score:** {total} / {max_score} (**{percent}%**)")
+jd_criteria = extract_jd_criteria(jd_text)
 
-        if percent >= 75:
-            st.success("✅ Strong Fit for the Role")
-        elif percent >= 50:
-            st.warning("⚠️ Partial Fit – Consider with Caution")
-        else:
-            st.error("❌ Low Fit – Not Recommended")
+# 📄 Resume Upload
+st.subheader("📎 Upload Resume (DOCX only)")
+resume_file = st.file_uploader("Upload candidate resume", type=["docx"], key="resume_upload")
 
-        st.subheader("🔍 Breakdown by Category")
-        for category, (score, weight, status) in results.items():
-            st.markdown(f"- **{category}** [{status}] → {score} / {weight}")
+if resume_file:
+    resume_text = extract_text_from_docx(resume_file)
+    st.subheader("📄 Resume Text Preview")
+    st.text_area("Resume Content", resume_text, height=300)
 
-        st.subheader("🧭 Gap Analysis")
-        if missing_items:
-            for cat, keywords in missing_items:
-                st.markdown(f"**❌ Missing:** {cat} → *Expected keywords: {', '.join(keywords)}*")
-        else:
-            st.markdown("✅ All core JD requirements are present in the resume.")
+    # 🧠 Evaluate
+    st.subheader("📊 Evaluation Summary")
+    scorecard, total, max_score, missing, exceeding = evaluate_resume(resume_text, jd_criteria)
+    percent = round((total / max_score) * 100, 2)
 
-        st.subheader("📝 High-Level Resume Review")
-        soft_skills = detect_soft_skills(resume_text)
-        review = generate_review(percent, soft_skills, missing_items)
-        st.markdown(review)
+    st.markdown(f"**Total Score:** `{total}` / `{max_score}` → **{percent}%**")
 
-if __name__ == "__main__":
-    main()
+    if percent >= 75:
+        st.success("✅ Strong Fit")
+    elif percent >= 50:
+        st.warning("⚠️ Partial Fit")
+    else:
+        st.error("❌ Low Fit")
+
+    st.subheader("📋 Detailed Scorecard")
+    st.table(pd.DataFrame(scorecard, columns=["Category", "Rating (1–5)", "Comments"]))
+
+    st.subheader("🧭 Gap & Excellence Analysis")
+    if missing:
+        st.markdown("**🔻 Missing Areas:**")
+        for cat, keywords in missing:
+            st.markdown(f"- ❌ {cat} — *Expected:* `{', '.join(keywords)}`")
+    if exceeding:
+        st.markdown("**🌟 Exceeds Expectations In:**")
+        for cat in exceeding:
+            st.markdown(f"- ⭐ {cat}")
+
+    st.subheader("📝 Feedback Summary")
+    feedback = generate_feedback(scorecard, missing, exceeding)
+    st.markdown(feedback)
