@@ -2,7 +2,7 @@ import streamlit as st
 from docx import Document
 import pandas as pd
 
-# --- Base keyword mappings ---
+# --- Keyword mappings for default categories ---
 default_keywords = {
     "Threat Platforms (SkyHigh, Trellix, McAfee)": ["SkyHigh", "Trellix", "McAfee Web Gateway"],
     "Deployment & Infra Design": ["deployment", "implementation", "infrastructure", "refresh", "lifecycle"],
@@ -15,7 +15,7 @@ default_keywords = {
     "Soft Skills": ["documentation", "training", "communication", "stakeholder", "presentation", "leadership"]
 }
 
-# --- Helpers ---
+# --- Helper: Extract text from DOCX ---
 def extract_text_from_docx(file):
     try:
         doc = Document(file)
@@ -23,14 +23,20 @@ def extract_text_from_docx(file):
     except Exception as e:
         return f"[Error extracting text: {e}]"
 
+# --- Helper: Extract JD criteria safely ---
 def extract_jd_criteria(text_block):
     lines = [line.strip("•*-•:\n ") for line in text_block.split("\n") if len(line.strip()) > 4]
     jd_criteria = {}
     for line in lines:
         matches = [k for k, v in default_keywords.items() if any(kw.lower() in line.lower() for kw in v)]
-        jd_criteria[matches[0] if matches else line[:40]] = default_keywords.get(matches[0], line.split())
+        if matches:
+            jd_criteria[matches[0]] = default_keywords[matches[0]]
+        else:
+            # Fallback: use line as custom category, use line's words as keywords
+            jd_criteria[line[:40]] = [word.strip(",.():") for word in line.split() if len(word) > 3]
     return jd_criteria
 
+# --- Helper: Resume evaluation logic ---
 def evaluate_resume(text, criteria):
     scorecard = []
     total = 0
@@ -57,6 +63,7 @@ def evaluate_resume(text, criteria):
         scorecard.append((category, rating, comment))
     return scorecard, total, max_score, missing, exceeding
 
+# --- Helper: Generate HR-style feedback summary ---
 def generate_feedback(scorecard, missing, exceeding):
     level = "Strong" if len(exceeding) >= 4 else "Partial" if len(exceeding) >= 2 else "Limited"
     feedback = f"Candidate shows **{level} alignment** to the JD.\n\n"
@@ -66,11 +73,11 @@ def generate_feedback(scorecard, missing, exceeding):
         feedback += f"**Missing key areas**: {', '.join([m[0] for m in missing])}.\n"
     return feedback
 
-# --- Streamlit App ---
-st.set_page_config(page_title="Threat Engineer Screener", layout="wide")
+# --- Streamlit UI ---
+st.set_page_config(page_title="Threat Engineer Resume Screener", layout="wide")
 st.title("🛡️ Threat Engineer Resume Screener")
 
-# 📎 JD Upload + Editor
+# 📌 JD Upload and Editor
 st.subheader("📌 Upload or Edit Job Description")
 jd_file = st.file_uploader("Upload JD (DOCX)", type=["docx"], key="jd_upload")
 jd_text = ""
@@ -79,11 +86,10 @@ if jd_file:
     jd_text = extract_text_from_docx(jd_file)
     st.success("✅ JD file uploaded and parsed.")
 
-jd_text = st.text_area("📝 Edit JD or paste here:", value=jd_text or "\n".join(default_keywords.keys()), height=250)
-
+jd_text = st.text_area("✏️ Edit JD or paste here:", value=jd_text or "\n".join(default_keywords.keys()), height=250)
 jd_criteria = extract_jd_criteria(jd_text)
 
-# 📄 Resume Upload
+# 📎 Resume Upload and Processing
 st.subheader("📎 Upload Resume (DOCX only)")
 resume_file = st.file_uploader("Upload candidate resume", type=["docx"], key="resume_upload")
 
@@ -92,7 +98,7 @@ if resume_file:
     st.subheader("📄 Resume Text Preview")
     st.text_area("Resume Content", resume_text, height=300)
 
-    # 🧠 Evaluate
+    # 📊 Evaluation
     st.subheader("📊 Evaluation Summary")
     scorecard, total, max_score, missing, exceeding = evaluate_resume(resume_text, jd_criteria)
     percent = round((total / max_score) * 100, 2)
@@ -111,9 +117,9 @@ if resume_file:
 
     st.subheader("🧭 Gap & Excellence Analysis")
     if missing:
-        st.markdown("**🔻 Missing Areas:**")
+        st.markdown("**🔻 Missing or Weak Areas:**")
         for cat, keywords in missing:
-            st.markdown(f"- ❌ {cat} — *Expected:* `{', '.join(keywords)}`")
+            st.markdown(f"- ❌ **{cat}** — _Expected:_ `{', '.join(keywords)}`")
     if exceeding:
         st.markdown("**🌟 Exceeds Expectations In:**")
         for cat in exceeding:
