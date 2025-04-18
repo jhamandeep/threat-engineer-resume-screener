@@ -1,5 +1,15 @@
-streamlit
-python-docx
-pandas
-sentence-transformers
-torch
+streamlit>=1.1.0,<2.0.0
+spacy>=3.0.0,<4.0.0
+pypdf2>=3.0.0,<4.0.0 # For PDF handling (choose one PDF library)
+# OR uncomment the line below and comment out pypdf2 if you prefer PyMuPDF
+# pymupdf>=1.20.0,<2.0.0
+python-docx>=1.0.0,<2.0.0 # For DOCX handling
+
+# The deployment environment (like Streamlit Cloud) needs to know which
+# spaCy model to download. We specify it here conceptually.
+# The actual download usually happens via a post-install script or
+# is handled automatically if the platform supports it.
+# For Streamlit Cloud, simply having 'spacy' listed is often enough,
+# and the app code tries to load 'en_core_web_sm'. If deployment fails
+# due to the model, you might need platform-specific configuration.
+# Ensure your app.py tries to load the correct model ('en_core_web_sm').
