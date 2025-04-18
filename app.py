@@ -1,19 +1,18 @@
 import streamlit as st
 import spacy
-import subprocess
-import sys
 import io
 from docx import Document
 import PyPDF2
+# No need for subprocess and sys anymore
 
-# --- SpaCy Model Loading and Download Logic ---
+# --- SpaCy Model Loading ---
 # Define the spaCy model name
 MODEL_NAME = "en_core_web_sm"
 
 @st.cache_resource # Use st.cache_resource for caching models/connections
 def load_spacy_model(model_name: str):
     """
-    Loads the spaCy model, downloading it if necessary.
+    Loads the spaCy model, assuming it has been installed via requirements.txt.
     Uses st.cache_resource to cache the model in memory.
     """
     try:
@@ -22,23 +21,14 @@ def load_spacy_model(model_name: str):
         st.success(f"Successfully loaded spaCy model: {model_name}")
         return nlp
     except OSError:
-        # If the model is not found (OSError), attempt to download it
-        st.warning(f"SpaCy model '{model_name}' not found. Attempting to download...")
-        try:
-            # Execute the spacy download command using subprocess
-            # Use sys.executable to ensure the command runs with the correct Python interpreter
-            subprocess.check_call([sys.executable, "-m", "spacy", "download", model_name])
-            st.success(f"Successfully downloaded spaCy model: {model_name}")
-            # Try loading the model again after successful download
-            nlp = spacy.load(model_name)
-            return nlp
-        except subprocess.CalledProcessError as e:
-            st.error(f"Failed to download spaCy model '{model_name}'. Error: {e}")
-            st.info("Please check your internet connection or try again later.")
-            st.stop() # Stop the app execution if model cannot be loaded
-        except Exception as e:
-             st.error(f"An unexpected error occurred during model download/loading: {e}")
-             st.stop()
+        # If loading fails, it means the model wasn't installed correctly
+        st.error(f"SpaCy model '{model_name}' not found. It might not have been installed correctly.")
+        st.info("Please ensure 'en_core_web_sm' or its wheel file URL is in your requirements.txt and check the deployment logs.")
+        st.stop() # Stop the app execution if model cannot be loaded
+    except Exception as e:
+         st.error(f"An unexpected error occurred during model loading: {e}")
+         st.stop()
+
 
 # Load the spaCy model using the cached function
 nlp = load_spacy_model(MODEL_NAME)
@@ -50,9 +40,17 @@ def extract_text_from_pdf(file_obj):
     try:
         reader = PyPDF2.PdfReader(file_obj)
         text = ""
-        for page_num in range(len(reader.pages)):
-            page = reader.pages[page_num]
-            text += page.extract_text() + "\n"
+        # Check if reader has pages before iterating
+        if len(reader.pages) > 0:
+            for page_num in range(len(reader.pages)):
+                page = reader.pages[page_num]
+                # Ensure page extraction is successful
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+                else:
+                    # Handle pages that might not have extractable text (e.g., images)
+                    text += "[Could not extract text from this page]\n"
         return text
     except Exception as e:
         st.error(f"Error extracting text from PDF: {e}")
@@ -91,35 +89,65 @@ if uploaded_file is not None:
         resume_text = extract_text_from_docx(file_bytes)
     else:
         st.error("Unsupported file type.")
+        resume_text = None # Ensure resume_text is None for unsupported types
 
     if resume_text:
         st.subheader("Extracted Text:")
-        st.text(resume_text[:1000] + ("..." if len(resume_text) > 1000 else "")) # Display first 1000 chars
+        # Display only a part of the text if it's very long
+        display_text = resume_text.strip()
+        if len(display_text) > 1500: # Increased display limit slightly
+             st.text(display_text[:1500] + "...\n[Text truncated for display]")
+        else:
+            st.text(display_text)
+
 
         # --- SpaCy Processing (Example) ---
         st.subheader("SpaCy Analysis (Example):")
         with st.spinner("Analyzing text..."):
-            doc = nlp(resume_text)
+            try:
+                doc = nlp(resume_text)
+                analysis_successful = True
+            except Exception as e:
+                 st.error(f"Error during spaCy processing: {e}")
+                 analysis_successful = False
 
-        # Example: Extract Named Entities
-        st.write("Named Entities:")
-        entities = [(ent.text, ent.label_) for ent in doc.ents]
-        if entities:
-            st.write(entities)
-        else:
-            st.write("No named entities found.")
 
-        # Example: Extract Nouns (potential keywords)
-        st.write("Nouns (Potential Keywords):")
-        nouns = [token.text for token in doc if token.pos_ == "NOUN"]
-        st.write(list(set(nouns))[:50]) # Display up to 50 unique nouns
+        if analysis_successful:
+            # Example: Extract Named Entities
+            st.write("Named Entities (PERSON, ORG, GPE, etc.):")
+            entities = [(ent.text, ent.label_) for ent in doc.ents]
+            if entities:
+                # Display entities in a more readable format
+                for text, label in entities:
+                    st.text(f"- {text} ({label})")
+            else:
+                st.write("No significant named entities found.")
 
-        # --- Add your specific screening logic here ---
-        st.subheader("Screening Results:")
-        # You would add your custom logic here to identify relevant skills,
-        # experience, and qualifications for a Threat Engineer role based on 'doc'
-        # For example:
-        # required_skills = ["penetration testing", "vulnerability assessment", "SIEM", "firewalls"]
-        # found_skills = [skill for skill in required_skills if skill.lower() in resume_text.lower()]
-        # st.write(f"Required skills found: {', '.join(found_skills)}")
-        st.info("Implement your specific Threat Engineer screening logic here using the processed 'doc' object.")
+            # Example: Extract Skills (requires a custom spaCy pipeline or pattern matching)
+            # SpaCy's base models don't have a 'SKILL' entity out of the box.
+            # You would typically use a library like spacy-lookups-data or build custom patterns.
+            st.write("Potential Skills (Basic Noun/Verb Phrase Extraction - Needs Improvement):")
+            # This is a very basic example; real skill extraction is more complex.
+            skills_candidates = [chunk.text for chunk in doc.noun_chunks] # Example: Noun chunks
+            st.write(list(set(skills_candidates))[:30]) # Display up to 30 unique noun chunks
+
+
+            # --- Add your specific screening logic here ---
+            st.subheader("Threat Engineer Screening Summary:")
+            st.info("Integrate your specific logic here to match resume content against Threat Engineer requirements.")
+            # Example: Check for keywords
+            keywords = ["penetration testing", "vulnerability assessment", "SIEM", "firewall", "IDS", "IPS", "malware analysis", "incident response"]
+            found_keywords = [keyword for keyword in keywords if keyword.lower() in resume_text.lower()]
+            if found_keywords:
+                st.write("Relevant keywords found:")
+                st.write(", ".join(found_keywords))
+            else:
+                 st.write("No specific Threat Engineer keywords found.")
+
+    elif uploaded_file is not None:
+         # Handle cases where file was uploaded but text extraction failed
+         st.warning("Could not process the file.")
+
+# Optional: Add some instructions or notes
+st.markdown("---")
+st.markdown("This app uses spaCy for natural language processing.")
